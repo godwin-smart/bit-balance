@@ -193,3 +193,90 @@
     ERR-INVALID-TOKEN
   )
 )
+
+;; PUBLIC FUNCTIONS
+
+;; Create a new diversified portfolio with specified tokens and allocations
+(define-public (create-portfolio
+    (initial-tokens (list 10 principal))
+    (percentages (list 10 uint))
+  )
+  (let (
+      (portfolio-id (+ (var-get portfolio-counter) u1))
+      (token-count (len initial-tokens))
+      (percentage-count (len percentages))
+    )
+    ;; Input validation
+    (asserts! (<= token-count MAX-TOKENS-PER-PORTFOLIO) ERR-MAX-TOKENS-EXCEEDED)
+    (asserts! (> token-count u1) ERR-INVALID-TOKEN)
+    ;; Require at least 2 tokens
+    (asserts! (is-eq token-count percentage-count) ERR-LENGTH-MISMATCH)
+    (asserts! (validate-portfolio-percentages percentages) ERR-INVALID-PERCENTAGE)
+    ;; Create portfolio record
+    (map-set Portfolios portfolio-id {
+      owner: tx-sender,
+      created-at: block-height,
+      last-rebalanced: block-height,
+      total-value: u0,
+      active: true,
+      token-count: token-count,
+    })
+    ;; Initialize portfolio assets dynamically
+    (try! (fold initialize-assets-fold
+      (map pair-tokens-percentages initial-tokens percentages)
+      (ok {
+        portfolio-id: portfolio-id,
+        index: u0,
+      })
+    ))
+    ;; Update user's portfolio tracking
+    (try! (add-to-user-portfolios tx-sender portfolio-id))
+    ;; Increment global counter
+    (var-set portfolio-counter portfolio-id)
+    (ok portfolio-id)
+  )
+)
+
+;; Helper functions for dynamic asset initialization
+(define-private (pair-tokens-percentages
+    (tokens (list 10 principal))
+    (percentages (list 10 uint))
+  )
+  (map combine-token-percentage tokens percentages)
+)
+
+(define-private (combine-token-percentage
+    (token principal)
+    (percentage uint)
+  )
+  {
+    token: token,
+    percentage: percentage,
+  }
+)
+
+(define-private (initialize-assets-fold
+    (asset-data {
+      token: principal,
+      percentage: uint,
+    })
+    (acc (response {
+      portfolio-id: uint,
+      index: uint,
+    } uint
+    ))
+  )
+  (let (
+      (current-acc (try! acc))
+      (portfolio-id (get portfolio-id current-acc))
+      (index (get index current-acc))
+    )
+    (try! (initialize-portfolio-asset index (get token asset-data)
+      (get percentage asset-data) portfolio-id
+    ))
+    (ok {
+      portfolio-id: portfolio-id,
+      index: (+ index u1),
+    })
+  )
+)
