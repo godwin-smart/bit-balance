@@ -104,3 +104,92 @@
     })
   )
 )
+
+;; Get protocol configuration
+(define-read-only (get-protocol-info)
+  {
+    owner: (var-get protocol-owner),
+    portfolio-counter: (var-get portfolio-counter),
+    protocol-fee: (var-get protocol-fee),
+    max-tokens: MAX-TOKENS-PER-PORTFOLIO,
+    max-user-portfolios: MAX-USER-PORTFOLIOS,
+  }
+)
+
+;; PRIVATE VALIDATION FUNCTIONS
+
+;; Validate token ID within portfolio bounds
+(define-private (validate-token-id
+    (portfolio-id uint)
+    (token-id uint)
+  )
+  (let ((portfolio (unwrap! (get-portfolio portfolio-id) false)))
+    (and
+      (< token-id MAX-TOKENS-PER-PORTFOLIO)
+      (< token-id (get token-count portfolio))
+      true
+    )
+  )
+)
+
+;; Ensure percentage is within valid range (0-10000 basis points)
+(define-private (validate-percentage (percentage uint))
+  (and (>= percentage u0) (<= percentage BASIS-POINTS))
+)
+
+;; Validate that all percentages in a portfolio sum correctly
+(define-private (validate-portfolio-percentages (percentages (list 10 uint)))
+  (let ((total-percentage (fold + percentages u0)))
+    (and
+      (is-eq total-percentage BASIS-POINTS)
+      (fold check-percentage-validity percentages true)
+    )
+  )
+)
+
+;; Helper function to validate individual percentages
+(define-private (check-percentage-validity
+    (current-percentage uint)
+    (valid bool)
+  )
+  (and valid (validate-percentage current-percentage))
+)
+
+;; Add portfolio to user's portfolio list
+(define-private (add-to-user-portfolios
+    (user principal)
+    (portfolio-id uint)
+  )
+  (let (
+      (current-portfolios (get-user-portfolios user))
+      (new-portfolios (unwrap! (as-max-len? (append current-portfolios portfolio-id) u20)
+        ERR-USER-STORAGE-FAILED
+      ))
+    )
+    (map-set UserPortfolios user new-portfolios)
+    (ok true)
+  )
+)
+
+;; Initialize individual portfolio asset with validation
+(define-private (initialize-portfolio-asset
+    (index uint)
+    (token principal)
+    (percentage uint)
+    (portfolio-id uint)
+  )
+  (if (and (>= percentage u0) (not (is-eq token tx-sender))) ;; Prevent self-referencing contracts
+    (begin
+      (map-set PortfolioAssets {
+        portfolio-id: portfolio-id,
+        token-id: index,
+      } {
+        target-percentage: percentage,
+        current-amount: u0,
+        token-address: token,
+      })
+      (ok true)
+    )
+    ERR-INVALID-TOKEN
+  )
+)
