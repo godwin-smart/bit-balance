@@ -280,3 +280,82 @@
     })
   )
 )
+
+;; Execute portfolio rebalancing with ownership verification
+(define-public (rebalance-portfolio (portfolio-id uint))
+  (let (
+      (portfolio (unwrap! (get-portfolio portfolio-id) ERR-INVALID-PORTFOLIO))
+      (rebalance-info (try! (calculate-rebalance-amounts portfolio-id)))
+    )
+    ;; Authorization and status checks
+    (asserts! (is-eq tx-sender (get owner portfolio)) ERR-NOT-AUTHORIZED)
+    (asserts! (get active portfolio) ERR-INVALID-PORTFOLIO)
+    (asserts! (get needs-rebalance rebalance-info) ERR-REBALANCE-FAILED)
+    ;; Update rebalancing timestamp
+    (map-set Portfolios portfolio-id
+      (merge portfolio {
+        last-rebalanced: block-height,
+        total-value: (get total-value rebalance-info),
+      })
+    )
+    (ok true)
+  )
+)
+
+;; Update individual asset allocation within a portfolio
+(define-public (update-portfolio-allocation
+    (portfolio-id uint)
+    (token-id uint)
+    (new-percentage uint)
+  )
+  (let (
+      (portfolio (unwrap! (get-portfolio portfolio-id) ERR-INVALID-PORTFOLIO))
+      (asset (unwrap! (get-portfolio-asset portfolio-id token-id) ERR-INVALID-TOKEN))
+    )
+    ;; Comprehensive validation
+    (asserts! (is-eq tx-sender (get owner portfolio)) ERR-NOT-AUTHORIZED)
+    (asserts! (get active portfolio) ERR-INVALID-PORTFOLIO)
+    (asserts! (validate-percentage new-percentage) ERR-INVALID-PERCENTAGE)
+    (asserts! (validate-token-id portfolio-id token-id) ERR-INVALID-TOKEN-ID)
+    ;; Update asset allocation
+    (map-set PortfolioAssets {
+      portfolio-id: portfolio-id,
+      token-id: token-id,
+    }
+      (merge asset { target-percentage: new-percentage })
+    )
+    (ok true)
+  )
+)
+
+;; Deactivate a portfolio (soft delete)
+(define-public (deactivate-portfolio (portfolio-id uint))
+  (let ((portfolio (unwrap! (get-portfolio portfolio-id) ERR-INVALID-PORTFOLIO)))
+    (asserts! (is-eq tx-sender (get owner portfolio)) ERR-NOT-AUTHORIZED)
+    (asserts! (get active portfolio) ERR-INVALID-PORTFOLIO)
+    (map-set Portfolios portfolio-id (merge portfolio { active: false }))
+    (ok true)
+  )
+)
+
+;; ADMIN FUNCTIONS
+
+;; Initialize protocol with new ownership (one-time setup)
+(define-public (initialize-protocol (new-owner principal))
+  (begin
+    (asserts! (is-eq tx-sender (var-get protocol-owner)) ERR-NOT-AUTHORIZED)
+    (asserts! (not (is-eq new-owner tx-sender)) ERR-NOT-AUTHORIZED)
+    (var-set protocol-owner new-owner)
+    (ok true)
+  )
+)
+
+;; Update protocol fee (admin only)
+(define-public (set-protocol-fee (new-fee uint))
+  (begin
+    (asserts! (is-eq tx-sender (var-get protocol-owner)) ERR-NOT-AUTHORIZED)
+    (asserts! (<= new-fee u500) ERR-INVALID-PERCENTAGE) ;; Max 5% fee
+    (var-set protocol-fee new-fee)
+    (ok true)
+  )
+)
